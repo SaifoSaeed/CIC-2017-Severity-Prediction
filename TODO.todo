@@ -1,0 +1,73 @@
+Tasks:
+    ☐ Delete or figure out .venv.
+    ✔ Debug code and track state of ben_mal.csv @done (12/21/2025, 11:41:47 AM)
+    ☐ Fix NaN and inf rows:
+        ☐ Check out their number first, then decide approach.
+        ☐ If low in count, drop from mal before calculating percent, aggregate properly.
+
+    ☐ Pre-processing should be done with revisions!
+    ☐ Classes?
+
+Goal:
+    Find the probability of low, medium or high severity of attack, if traffic is not benign.
+
+Clean the data:
+    Combine the data:
+        ✔ We need to use all malicious instances available and combine them with SOME of the benign data. @done (12/18/2025, 11:06:57 AM)
+        ✔ Combined dataset must have 50% benign and 50% malicious (use stratified sampling). @done (12/18/2025, 11:06:39 AM)
+        ✘ Malicious half of data must also have equal number of each type of malicious traffic (eg. 50% DDOS, 50% Web-based). @cancelled (12/17/2025, 11:43:33 AM)
+            - We have to accept that the data is too imbalanced for this. We will try our best to handle it in training.
+
+    Feature Extraction:
+        ✘ Clear columns with one unique value (meaningless columns). @cancelled (12/19/2025, 8:17:13 PM)
+            - Why does df["Label"] only have one unique value?
+        ✔ Clear columns with no real physical meaning (needs discussion). @done (12/19/2025, 8:17:07 PM)
+        ✔ Check all correlations using small sample of data (all 80 columns, about 10k rows of the combined dataset). @done (12/19/2025, 8:17:49 PM)
+        ☐ Any two columns that show a correlation factor of 1.0 implies that one of them should be dropped.
+
+Strategy:
+    Keywords:
+        Cost-Sensitive Learning pipeline.
+        Prioritizing Recall -> less false negatives (critical).
+        Ordinal Cost Constraint -> if uncertain, will predict higher risk than lower, (not sure if low risk or medium, probably medium).
+        Ordinal Regression -> allow model to understand that High risk is higher than low but also higher than medium.
+    ☐ Find equation structure.
+    ☐ Experimentally determine each run. One run of valid priority weighted equation should be fine for course scope.
+    ☐ Subjective mapping of low, medium and high risk attacks.
+        ☐ Must explore CIA triad and CVSS.
+        ☐ We have to talk about assumed Organizational Policy.
+
+Validation & Testing:
+    ☐ Must use stratified k-fold cross validation:
+        1. Split your data into 5 chunks (folds), keeping the ratio of attacks equal in each.
+        2. Train on folds 1-4, Test on 5.
+        3. Rotate and repeat 5 times.
+        4. Average the results.
+        Scientific Validity: This proves your model is stable and works on any subset of the data, not just a "lucky split."
+    
+    For each fold:
+        ☐ Train on balanced dataset, test on imbalanced dataset (90% benign). This emulates reality and the output predictions can then be used in metrics.
+        ☐ Matthews Correlation Coefficient (MCC) -> judges if the model correctly predicts the majority AND the minority.
+        ☐ Provide recall for EACH label, not for all the labels. Some attacks will be much rarer in testing dataset. Provide recalls for each label so as not to be misleading.
+        ☐ Check if all attacks are predicted malicious or benign.
+        ☐ Find granularity -> (did it detect all attacks or just a specific type?)
+
+    
+    To drop:
+        """
+        avg packet size                         -> identical to packet length mean.
+        avg fwd-bwd segment size                -> identical to fwd/bwd packet lenght mean.
+        Fwd-Bwd Header Length                   -> pandas parsing error? (CHECK)
+        fwd-bwd packet length max/min           -> we have std column.
+        First two columns?                      -> Parsing error?
+        Fwd-bwd IAT Total/Mean/ Std/Max/Min     -> redundant with Flow IAT and duration.
+        CWR and URG and ECE flag count          -> not commonly available in real scenarios.
+        FWD-BWD PSH-URG Flags                   -> redundant or deprecated or unused.
+        /bulk columns                           -> mostly miscalculated, no info.
+        min_seg_size_fwd                        -> usually constant, little info.
+        active-idle std/max/min                 -> the mean covers those already.
+        act_data_pkt_fwd                        -> highly correlates to total fwd packets.
+        Subflow packets and bytes.              -> identical to total length.
+        #packet length mean, std, var           -> same as above.
+        #Flow IAT max/min                       -> conceptually covered by idle time mean.
+        """
