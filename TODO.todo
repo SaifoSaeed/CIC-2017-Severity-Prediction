@@ -1,10 +1,11 @@
 Tasks:
     ☐ Delete or figure out .venv.
     ✔ Debug code and track state of ben_mal.csv @done (12/21/2025, 11:41:47 AM)
-    ☐ Fix NaN and inf rows:
-        ☐ Check out their number first, then decide approach.
-        ☐ If low in count, drop from mal before calculating percent, aggregate properly.
-
+    ✔ Fix NaN and inf rows: @done (12/27/2025, 9:55:47 AM)
+        ✔ Check out their number first, then decide approach. @done (12/23/2025, 9:52:39 PM)
+        ✔ Have to drop NaN, inf and duplicate rows from mal and ben, then sample percent from ben and aggregate. @done (12/24/2025, 1:03:21 AM)
+        ✔ Still have duplicates and inf values in next steps. Fix. @done (12/27/2025, 9:55:46 AM)
+    ✔ Check correlation dropping. @done (12/27/2025, 9:55:50 AM)
     ☐ Pre-processing should be done with revisions!
     ☐ Classes?
 

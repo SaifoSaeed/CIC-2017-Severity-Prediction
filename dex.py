@@ -1,6 +1,7 @@
 from dython.nominal import associations
 from pathlib import Path
 import pandas as pd
+import numpy as np
 import argparse
 import time
 import os
@@ -34,25 +35,84 @@ def PrintAll(df: pd.DataFrame, n: int = 4) -> None:
 
 #Filter all DataFrame objects by label, then combine into one.
 def FilterBenMal():
-    def FilterCheck(ben_rows, mal_rows):
-        final_ben_rows = ben_rows
-        final_mal_rows = mal_rows
+    #Clean NaN, inf and duplicate rows from all.
+    def CleanInvDups():
+        ben_rows_dropped = 0
+        mal_rows_dropped = 0
+        # ---- Drop Dups ---- #
+        ben_df = pd.read_csv(output_files[0])
+        mal_df = pd.read_csv(output_files[1])
 
-        ben_ratio = final_ben_rows / ben_rows
-        mal_ratio = final_mal_rows / mal_rows
+        ben_rows_org = ben_df.shape[0]
+        mal_rows_org = mal_df.shape[0]
+        
+        print(f"Original row counts: mal_rows = {mal_rows_org} | ben_rows = {ben_rows_org}")
 
-        if ben_ratio != 1.0 or mal_ratio != 1.0:
-            raise RuntimeError(f"Failed validation check.\nben_ratio = {ben_ratio} | mal_ratio = {mal_ratio}")
+        ben_df.drop_duplicates(inplace=True)
+        mal_df.drop_duplicates(inplace=True)
+
+        ben_rows_dropped = ben_rows_org - ben_df.shape[0] 
+        mal_rows_dropped = mal_rows_org - mal_df.shape[0]
+
+        # print(f"After dropping duplicates: mal_rows = {mal_rows_dropped} | ben_rows = {ben_rows_dropped}")
+        print(f"After dropping duplicates: mal_rows = {mal_df.shape[0]} | ben_rows = {ben_df.shape[0] }")
+
+        # ---- Drop NaN ---- #
+        ben_df.dropna(inplace=True)
+        mal_df.dropna(inplace=True)
+
+        ben_rows_dropped = ben_rows_org - ben_df.shape[0]
+        mal_rows_dropped = mal_rows_org - mal_df.shape[0]
+
+        # print(f"After dropping NaN values: mal_rows = {mal_rows_dropped} | ben_rows = {ben_rows_dropped}")
+        print(f"After dropping NaN values: mal_rows = {mal_df.shape[0]} | ben_rows = {ben_df.shape[0] }")
+
+        # ---- Drop inf ---- #
+        ben_df.replace([np.inf, -np.inf], np.nan).dropna(inplace=True)
+        mal_df.replace([np.inf, -np.inf], np.nan).dropna(inplace=True)
+
+        ben_rows_dropped = ben_rows_org - ben_df.shape[0]
+        mal_rows_dropped = mal_rows_org - mal_df.shape[0]
+
+        # print(f"After dropping inf and -inf values: mal_rows = {mal_rows_dropped} | ben_rows = {ben_rows_dropped}")
+        print(f"After dropping inf and -inf values: mal_rows = {mal_df.shape[0]} | ben_rows = {ben_df.shape[0] }")
+
+        ben_df.to_csv(output_files[0], index=False)
+        mal_df.to_csv(output_files[1], index=False)
+
+        ben_rows_final = ben_df.shape[0]
+        mal_rows_final = mal_df.shape[0]
+
+        del ben_df
+        del mal_df
+        gc.collect()
+
+        return (ben_rows_final, mal_rows_final)
     
-    def RatioedAggregate():
+    def RowCheck(ben_cleaned_rows, mal_cleaned_rows, ben_read_rows, mal_read_rows):
+        ben_read_over_cleaned = ben_read_rows / ben_cleaned_rows
+        mal_read_over_cleaned = mal_read_rows / mal_cleaned_rows
+        
+        print(f"ben_read_over_cleaned = ben_read_rows / ben_cleaned_rows = {ben_read_rows} / {ben_cleaned_rows} = {ben_read_over_cleaned}")
+        print(f"mal_read_over_cleaned = mal_read_rows / mal_cleaned_rows = {mal_read_rows} / {mal_cleaned_rows} = {mal_read_over_cleaned}")
+
+        if not (np.isclose(1, ben_read_over_cleaned) or np.isclose(1, mal_read_over_cleaned)):
+            raise Exception("Ratios are wrong.")
+
+        return
+    
+    #Aggregate 50/50 split of malicious and benign attack instances.
+    def RatioedAggregate(ben_rows_final, mal_rows_final):
         comb_ben_df = pd.read_csv(output_files[0])
         comb_mal_df = pd.read_csv(output_files[1])
+
         ben_rows = comb_ben_df.shape[0]
         mal_rows = comb_mal_df.shape[0]
-        FilterCheck(ben_rows, mal_rows)
+
+        RowCheck(ben_rows_final, mal_rows_final, ben_rows, mal_rows)
 
         percent = mal_rows / ben_rows
-
+        print(f"mal_rows / ben_rows = {percent}")
         sample_ben_df = comb_ben_df.sample(frac=percent, random_state=42)
 
         return pd.concat([sample_ben_df, comb_mal_df], ignore_index=True)
@@ -83,10 +143,13 @@ def FilterBenMal():
 
         header_write = True
         
+        #Memory-efficient handling of DataFrame.
         del temp_df, ben_df, mal_df
         gc.collect()
 
-    return RatioedAggregate()
+    ben_rows_final, mal_rows_final = CleanInvDups()
+
+    return RatioedAggregate(ben_rows_final, mal_rows_final)
 
 #Clear columns with one unique value.
 def ClearUnique():
@@ -106,6 +169,7 @@ def DropExtra():
         "Bwd Packet Length Max", "Bwd Packet Length Min",# "Bwd Packet Length Mean", "Bwd Packet Length Std",
         "CWE Flag Count", "URG Flag Count", "ECE Flag Count",
         "Fwd Header Length", "Fwd Header Length.1", "Bwd Header Length", "Bwd Header Length.1", 
+        "Total Length of Bwd Packets",
         "Unnamed: 0", "Unnamed: 0.1",
         "Fwd PSH Flags", "Fwd URG Flags", "Bwd PSH Flags", "Bwd URG Flags", 
         "Active Std", "Active Max", "Active Min", "Idle Std", "Idle Max", "Idle Min",
@@ -126,55 +190,100 @@ def DropExtra():
         except Exception as e:
             print(f"Failed to drop {col} due to {e}.")
 
-
     return df
 
-import pandas as pd
-import numpy as np
-from dython.nominal import associations
-
+#Checks top 20 correlations in the dataset. 
 def DropPerfect():
     df = pd.read_csv(agg_df_file)
-    
     df.columns = df.columns.str.strip()
     
+    print(f"Initial shape: {df.shape}")
+    
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    
     sample_df = df.sample(frac=0.1, random_state=42)
-    print(f"Computing correlations on shape: {sample_df.shape}")
+    
+    sample_df[numeric_cols] = sample_df[numeric_cols].replace([np.inf, -np.inf], np.nan).dropna()
+    sample_df = sample_df.dropna()
 
-    # 2. Run Associations
-    # nom_nom_assoc='cramer' forces symmetric output for categoricals (easier to filter)
-    # If you use Theil's U (default), it is asymmetric.
+    print(f"Computing correlations on sample shape: {sample_df.shape}")
+
     result = associations(
         sample_df, 
         nom_nom_assoc='cramer', 
         compute_only=True, 
         cramers_v_bias_correction=True
     )
+    
     corr_matrix = result['corr']
 
-    print("\n--- PERFECT CORRELATIONS (Redundant Features) ---")
-    
-    seen_pairs = set()
-    drop_candidates = set()
-
+    corr_pairs = []
     columns = corr_matrix.columns
+    
     for i in range(len(columns)):
         for j in range(i + 1, len(columns)):
             col_1 = columns[i]
             col_2 = columns[j]
-            
             val = corr_matrix.iloc[i, j]
-            
-            if np.isclose(abs(val), 1.0, atol=1e-5):
-                print(f"({col_1} vs {col_2}) : {val:.4f}")
-                
-                # Suggest dropping the second one in the pair
-                drop_candidates.add(col_2)
+            corr_pairs.append((col_1, col_2, val))
 
-    print(f"\nRecommended columns to drop (Redundant): {list(drop_candidates)}")
+    corr_pairs.sort(key=lambda x: abs(x[2]), reverse=True)
+
+    print("\n--- TOP 20 CORRELATIONS ---")
+    for c1, c2, val in corr_pairs[:20]:
+        print(f"{c1} vs {c2}: {val:.4f}")
+
+    drop_candidates = set()
+    print("\n--- PERFECT CORRELATIONS ---")
+    for c1, c2, val in corr_pairs:
+        if np.isclose(abs(val), 1.0, atol=1e-5):
+            print(f"Removing {c2} (redundant to {c1})")
+            drop_candidates.add(c2)
+
+    if drop_candidates:
+        df.drop(columns=list(drop_candidates), inplace=True, errors='ignore')
+        print(f"Dropped {len(drop_candidates)} columns.")
+    
+    prev_rows = df.shape[0]
+    df.drop_duplicates(inplace=True)
+    curr_rows = df.shape[0]
+    
+    print(f"Feature-induced duplicates dropped: {prev_rows - curr_rows}")
+    
     return df
 
-#Decorator.
+#Uses stratified sampling for 50/50 benign/malignant instances.
+def RebalanceDataset(df: pd.DataFrame):
+    print("\n--- REBALANCING DATASET (50/50 Stratified) ---")
+    
+    is_ben = df['Label'] == 'BENIGN'
+    ben_df = df[is_ben]
+    mal_df = df[~is_ben]
+    
+    ben_count = len(ben_df)
+    mal_count = len(mal_df)
+    
+    print(f"Current Counts -> Benign: {ben_count} | Malicious: {mal_count}")
+    
+    target_count = min(ben_count, mal_count)
+    
+    if ben_count > target_count:
+        print(f"Downsampling Benign from {ben_count} to {target_count}...")
+        ben_df = ben_df.sample(n=target_count, random_state=42)
+        
+    if mal_count > target_count:
+        print(f"Downsampling Malicious from {mal_count} to {target_count}...")
+        mal_df = mal_df.sample(n=target_count, random_state=42)
+        
+    balanced_df = pd.concat([ben_df, mal_df], ignore_index=True)
+    balanced_df = balanced_df.sample(frac=1, random_state=42).reset_index(drop=True)
+    
+    print(f"Final Balanced Shape: {balanced_df.shape}")
+    print(f"Final Split: {balanced_df['Label'].value_counts()}")
+    
+    return balanced_df
+
+#Decorator for flexibility.
 def WriteWrap(func):
     start = time.perf_counter()
     df = func()
@@ -190,7 +299,6 @@ def WriteWrap(func):
 
     print(f"Done with {func.__name__}. ET: {end-start:.3f}.")
     df.to_csv(agg_df_file, index=False)
-    
 
 #Clear existing directories.
 def DeleteExisting():
@@ -218,11 +326,18 @@ if __name__ == "__main__":
         WriteWrap(ClearUnique)
 
     if args.drop_perfect:
-        WriteWrap(DropPerfect)
+        def DropAndBalance():
+            df = DropPerfect()     # Drops cols and duplicates (unbalances data)
+            df = RebalanceDataset(df) # Fixes the 50/50 split
+            return df
+            
+        WriteWrap(DropAndBalance)
+    # try:
+    #     df = pd.read_csv(agg_df_file)
+    #     df.info()
+    #     PrintAll(df)
+        
+    # except Exception as e:
+    #     print(f"Error, exception raised: {e}")
 
-    try:
-        df = pd.read_csv(agg_df_file)
-        df.info()
-        PrintAll(df)
-    except Exception as e:
-        print(f"Error, exception raised: {e}")
+    print("Done!")
