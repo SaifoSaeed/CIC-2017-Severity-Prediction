@@ -1,9 +1,0 @@
-Duplicates found: 165133 rows dropped.
-nodup_rows / df_rows = 950159 / 1115292 = 0.8519
-NaN values found. Total count: 1037
-Infinity values found. Total count: 1989
-Computing correlations on shape: (111529, 29)
-
---- PERFECT CORRELATIONS (Redundant Features) ---
-
-Recommended columns to drop (Redundant): []

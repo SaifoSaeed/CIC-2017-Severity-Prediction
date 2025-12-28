@@ -1,10 +1,15 @@
-.PHONY: all deps save-deps help aggregate drop-extra clear-unique 
+.PHONY: all dex save-deps deps help no-args train_all neural xgb lr
 
 SHELL = cmd.exe
 
-all:
-	python dex.py -a -cu -dx -dp
-#	python dex.py -cu -dx -dp
+MODELS_DIR = models
+OUTPUT_DIR = $(MODELS_DIR)/weights
+DRIVE  = $(MODELS_DIR)/drive.py
+
+all: dex train_all
+	
+dex:
+	python dex.py -a -cu -dx -dp -fe
 
 save-deps:
 	uv pip freeze > requirements.txt
@@ -14,18 +19,19 @@ deps:
 
 help:
 	python dex.py -h
-
-aggregate: 
-	python dex.py -a
-
-clear-unique:
-	python dex.py -cu
-
-drop-extra:
-	python dex.py -dx
-
-drop-perfect:
-	python dex.py -dp
+	python $(DRIVE) -h
 
 no-args:
 	python dex.py
+
+train_all:
+	python $(DRIVE) -l -x -n -o $(OUTPUT_DIR)
+
+neural:
+	python $(DRIVE) -n -o $(OUTPUT_DIR)
+
+xgb:
+	python $(DRIVE) -x -o $(OUTPUT_DIR)
+
+lr:
+	python $(DRIVE) -l -o $(OUTPUT_DIR)

@@ -7,7 +7,10 @@ Tasks:
         ✔ Still have duplicates and inf values in next steps. Fix. @done (12/27/2025, 9:55:46 AM)
     ✔ Check correlation dropping. @done (12/27/2025, 9:55:50 AM)
     ☐ Pre-processing should be done with revisions!
-    ☐ Classes?
+    ☐ Fix driver function for classes.
+    ☐ Save to "weights" dir in cwd (models).
+    ✘ Add main file to pipeline everything. @cancelled (12/28/2025, 1:39:00 AM)
+    ☐ Tune models?
 
 Goal:
     Find the probability of low, medium or high severity of attack, if traffic is not benign.
@@ -24,7 +27,7 @@ Clean the data:
             - Why does df["Label"] only have one unique value?
         ✔ Clear columns with no real physical meaning (needs discussion). @done (12/19/2025, 8:17:07 PM)
         ✔ Check all correlations using small sample of data (all 80 columns, about 10k rows of the combined dataset). @done (12/19/2025, 8:17:49 PM)
-        ☐ Any two columns that show a correlation factor of 1.0 implies that one of them should be dropped.
+        ✔ Any two columns that show a correlation factor of 1.0 implies that one of them should be dropped. @done (12/27/2025, 11:33:34 PM)
 
 Strategy:
     Keywords:

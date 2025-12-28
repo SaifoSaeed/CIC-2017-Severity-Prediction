@@ -5,6 +5,7 @@ dfs
 .vscode
 *.md
 proc_dfs
-out.txt
-main.py
-temp.txt
+.python-version
+__pycache__
+CIC-IDS-2017-CUDA
+weights

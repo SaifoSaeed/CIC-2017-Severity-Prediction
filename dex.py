@@ -22,16 +22,8 @@ def ParseArgs():
     parser.add_argument( "-cu", "--clear-unique", action="store_true", help="aggregates benign and malicious data into two separate Dataframe objects in the 'proc_dfs' directory.")
     parser.add_argument("-dp", "--drop-perfect", action="store_true", help="deletes 1.0 column correlations.")
     parser.add_argument("-dx", "--drop-extra", action="store_true", help="drops superfluous columns. (subjective)")
+    parser.add_argument("-fe", "--feature-extract", action="store_true", help="extracts columns from other columns using domain knowledge")
     return parser.parse_args()
-
-#Better print function (for me).
-def PrintAll(df: pd.DataFrame, n: int = 4) -> None:
-    cols_list = df.columns.to_list()
-    lim = 4
-    
-    for col_idx in range(0, len(cols_list), lim):
-        cols = cols_list[col_idx : col_idx + lim]
-        print(df[cols].head(n),"\n")
 
 #Filter all DataFrame objects by label, then combine into one.
 def FilterBenMal():
@@ -39,42 +31,53 @@ def FilterBenMal():
     def CleanInvDups():
         ben_rows_dropped = 0
         mal_rows_dropped = 0
-        # ---- Drop Dups ---- #
+        
+        print("Reading intermediate files...")
         ben_df = pd.read_csv(output_files[0])
         mal_df = pd.read_csv(output_files[1])
+        
+        # --- 1. Fix Labels Early ---
+        print("Fixing corrupted labels...")
+        fix_map = {
+            'Web Attack � Brute Force': 'WebAttackBruteForce',
+            'Web Attack � XSS': 'WebAttackXSS',
+            'Web Attack � Sql Injection': 'WebAttackSqlInjection'
+            }
+        ben_df['Label'] = ben_df['Label'].replace(fix_map)
+        mal_df['Label'] = mal_df['Label'].replace(fix_map)
 
         ben_rows_org = ben_df.shape[0]
         mal_rows_org = mal_df.shape[0]
-        
         print(f"Original row counts: mal_rows = {mal_rows_org} | ben_rows = {ben_rows_org}")
 
+        # --- 2. Drop Duplicates ---
         ben_df.drop_duplicates(inplace=True)
         mal_df.drop_duplicates(inplace=True)
-
-        ben_rows_dropped = ben_rows_org - ben_df.shape[0] 
-        mal_rows_dropped = mal_rows_org - mal_df.shape[0]
-
-        # print(f"After dropping duplicates: mal_rows = {mal_rows_dropped} | ben_rows = {ben_rows_dropped}")
         print(f"After dropping duplicates: mal_rows = {mal_df.shape[0]} | ben_rows = {ben_df.shape[0] }")
 
-        # ---- Drop NaN ---- #
+        # --- 3. Drop NaNs ---
+        ben_df.dropna(inplace=True)
+        mal_df.dropna(inplace=True)
+        print(f"After dropping NaN values: mal_rows = {mal_df.shape[0]} | ben_rows = {ben_df.shape[0] }")
+
+        # --- 4. Drop Infinity (The Fix) ---
+        print("Scrubbing Infinity values...")
+        cols_to_check = ['Flow Bytes/s', 'Flow Packets/s']
+        
+        for col in cols_to_check:
+            # Force "Infinity" strings to be real numeric NaNs or Infs
+            ben_df[col] = pd.to_numeric(ben_df[col], errors='coerce')
+            mal_df[col] = pd.to_numeric(mal_df[col], errors='coerce')        
+
+        # FIX: Do not chain inplace operations. Do them sequentially.
+        # Replace Inf with NaN in the actual dataframe
+        ben_df.replace([np.inf, -np.inf], np.nan, inplace=True)
+        mal_df.replace([np.inf, -np.inf], np.nan, inplace=True)
+        
+        # Now drop the NaNs we just created
         ben_df.dropna(inplace=True)
         mal_df.dropna(inplace=True)
 
-        ben_rows_dropped = ben_rows_org - ben_df.shape[0]
-        mal_rows_dropped = mal_rows_org - mal_df.shape[0]
-
-        # print(f"After dropping NaN values: mal_rows = {mal_rows_dropped} | ben_rows = {ben_rows_dropped}")
-        print(f"After dropping NaN values: mal_rows = {mal_df.shape[0]} | ben_rows = {ben_df.shape[0] }")
-
-        # ---- Drop inf ---- #
-        ben_df.replace([np.inf, -np.inf], np.nan).dropna(inplace=True)
-        mal_df.replace([np.inf, -np.inf], np.nan).dropna(inplace=True)
-
-        ben_rows_dropped = ben_rows_org - ben_df.shape[0]
-        mal_rows_dropped = mal_rows_org - mal_df.shape[0]
-
-        # print(f"After dropping inf and -inf values: mal_rows = {mal_rows_dropped} | ben_rows = {ben_rows_dropped}")
         print(f"After dropping inf and -inf values: mal_rows = {mal_df.shape[0]} | ben_rows = {ben_df.shape[0] }")
 
         ben_df.to_csv(output_files[0], index=False)
@@ -93,15 +96,9 @@ def FilterBenMal():
         ben_read_over_cleaned = ben_read_rows / ben_cleaned_rows
         mal_read_over_cleaned = mal_read_rows / mal_cleaned_rows
         
-        print(f"ben_read_over_cleaned = ben_read_rows / ben_cleaned_rows = {ben_read_rows} / {ben_cleaned_rows} = {ben_read_over_cleaned}")
-        print(f"mal_read_over_cleaned = mal_read_rows / mal_cleaned_rows = {mal_read_rows} / {mal_cleaned_rows} = {mal_read_over_cleaned}")
-
         if not (np.isclose(1, ben_read_over_cleaned) or np.isclose(1, mal_read_over_cleaned)):
             raise Exception("Ratios are wrong.")
 
-        return
-    
-    #Aggregate 50/50 split of malicious and benign attack instances.
     def RatioedAggregate(ben_rows_final, mal_rows_final):
         comb_ben_df = pd.read_csv(output_files[0])
         comb_mal_df = pd.read_csv(output_files[1])
@@ -142,8 +139,6 @@ def FilterBenMal():
             mal_df.to_csv(output_files[1], mode='a', index=False, header=not header_write)
 
         header_write = True
-        
-        #Memory-efficient handling of DataFrame.
         del temp_df, ben_df, mal_df
         gc.collect()
 
@@ -165,8 +160,8 @@ def ClearUnique():
 def DropExtra():
     df = pd.read_csv(agg_df_file)
     to_drop = [
-        "Fwd Packet Length Max", "Fwd Packet Length Min",# "Fwd Packet Length Mean", "Fwd Packet Length Std",
-        "Bwd Packet Length Max", "Bwd Packet Length Min",# "Bwd Packet Length Mean", "Bwd Packet Length Std",
+        "Fwd Packet Length Max", "Fwd Packet Length Min",
+        "Bwd Packet Length Max", "Bwd Packet Length Min",
         "CWE Flag Count", "URG Flag Count", "ECE Flag Count",
         "Fwd Header Length", "Fwd Header Length.1", "Bwd Header Length", "Bwd Header Length.1", 
         "Total Length of Bwd Packets",
@@ -202,7 +197,6 @@ def DropPerfect():
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     
     sample_df = df.sample(frac=0.1, random_state=42)
-    
     sample_df[numeric_cols] = sample_df[numeric_cols].replace([np.inf, -np.inf], np.nan).dropna()
     sample_df = sample_df.dropna()
 
@@ -240,10 +234,6 @@ def DropPerfect():
             print(f"Removing {c2} (redundant to {c1})")
             drop_candidates.add(c2)
 
-    if drop_candidates:
-        df.drop(columns=list(drop_candidates), inplace=True, errors='ignore')
-        print(f"Dropped {len(drop_candidates)} columns.")
-    
     prev_rows = df.shape[0]
     df.drop_duplicates(inplace=True)
     curr_rows = df.shape[0]
@@ -263,39 +253,64 @@ def RebalanceDataset(df: pd.DataFrame):
     ben_count = len(ben_df)
     mal_count = len(mal_df)
     
-    print(f"Current Counts -> Benign: {ben_count} | Malicious: {mal_count}")
-    
     target_count = min(ben_count, mal_count)
     
     if ben_count > target_count:
-        print(f"Downsampling Benign from {ben_count} to {target_count}...")
         ben_df = ben_df.sample(n=target_count, random_state=42)
         
     if mal_count > target_count:
-        print(f"Downsampling Malicious from {mal_count} to {target_count}...")
         mal_df = mal_df.sample(n=target_count, random_state=42)
         
     balanced_df = pd.concat([ben_df, mal_df], ignore_index=True)
     balanced_df = balanced_df.sample(frac=1, random_state=42).reset_index(drop=True)
     
-    print(f"Final Balanced Shape: {balanced_df.shape}")
-    print(f"Final Split: {balanced_df['Label'].value_counts()}")
-    
     return balanced_df
 
-#Decorator for flexibility.
+#Calculates the Coefficient of Variation for Flow Inter-Arrival Time.
+def CalculateIATCV(df: pd.DataFrame) -> pd.DataFrame:
+    print("Extracting Feature: Flow IAT Coefficient of Variation...")
+    df['Flow IAT CV'] = df['Flow IAT Std'] / df['Flow IAT Mean']
+    df['Flow IAT CV'] = df['Flow IAT CV'].replace([np.inf, -np.inf], 0)
+    df['Flow IAT CV'] = df['Flow IAT CV'].fillna(0)
+    return df
+
+#Calculates the ratio of Forward Bytes to Backward Bytes.
+def CalculateTrafficAsymmetry(df: pd.DataFrame) -> pd.DataFrame:
+    print("Extracting Feature: Traffic Asymmetry Ratio...")
+    bwd_bytes_estimated = df['Total Backward Packets'] * df['Bwd Packet Length Mean']
+    df['Traffic Asymmetry'] = df['Total Length of Fwd Packets'] / bwd_bytes_estimated
+    df['Traffic Asymmetry'] = df['Traffic Asymmetry'].replace([np.inf, -np.inf], -1)
+    df['Traffic Asymmetry'] = df['Traffic Asymmetry'].fillna(0)
+    return df
+
+#Adds various features based on domain knowledge.
+def FeatureExtract():
+    df = pd.read_csv(agg_df_file)
+    df = CalculateIATCV(df)
+    df = CalculateTrafficAsymmetry(df)
+    return df
+
 def WriteWrap(func):
     start = time.perf_counter()
     df = func()
     end = time.perf_counter()
 
-    print(f"info = {df.info()}")
-    print(f"shape = {df.shape}")
-    for col in df.columns:
-        if(df[col].nunique() < 10):
-            unique = df[col].unique()
-
-            print(f"{col}__unique__ = {unique}")
+    # CRASH ON INFINITY CHECK
+    numeric_df = df.select_dtypes(include=[np.number])
+    is_inf = np.isinf(numeric_df)
+    
+    if is_inf.any().any():
+        cols_with_inf = is_inf.any()
+        bad_cols = cols_with_inf[cols_with_inf].index.tolist()
+        bad_row_count = is_inf.any(axis=1).sum()
+        
+        error_msg = (
+            f"\n[CRITICAL ERROR] Infinity values generated by {func.__name__}!\n"
+            f"Columns affected: {bad_cols}\n"
+            f"Row count: {bad_row_count}\n"
+        )
+        df.to_csv("ERRORED_DF.csv")
+        raise ValueError(error_msg)
 
     print(f"Done with {func.__name__}. ET: {end-start:.3f}.")
     df.to_csv(agg_df_file, index=False)
@@ -312,7 +327,7 @@ def DeleteExisting():
     if os.path.exists(agg_df_file):
         os.remove(agg_df_file)
 
-if __name__ == "__main__":
+def main():
     args = ParseArgs()
 
     if args.aggregate:
@@ -327,17 +342,15 @@ if __name__ == "__main__":
 
     if args.drop_perfect:
         def DropAndBalance():
-            df = DropPerfect()     # Drops cols and duplicates (unbalances data)
-            df = RebalanceDataset(df) # Fixes the 50/50 split
+            df = DropPerfect()
+            df = RebalanceDataset(df)
             return df
-            
         WriteWrap(DropAndBalance)
-    # try:
-    #     df = pd.read_csv(agg_df_file)
-    #     df.info()
-    #     PrintAll(df)
-        
-    # except Exception as e:
-    #     print(f"Error, exception raised: {e}")
 
+    if args.feature_extract:
+        WriteWrap(FeatureExtract)
+    
     print("Done!")
+
+if __name__ == "__main__":
+    main()
