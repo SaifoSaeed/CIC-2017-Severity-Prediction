@@ -27,7 +27,6 @@ def map_labels_to_severity(y_series):
         'WebAttackBruteForce': 2, 'WebAttackXSS': 2, 'WebAttackSqlInjection': 2,
         'Bot': 3, 'DDoS': 3, 'Heartbleed': 3, 'Infiltration': 3
     }
-    # Map, filling unknown with -1 (or handling appropriately)
     return y_series.map(severity_map)
 
 def get_weights_from_matrix(cost_matrix):
@@ -79,6 +78,10 @@ class XGBoost:
     def predict(self, X):
         return self.model.predict(X)
 
+    def predict_proba(self, X):
+        """Returns raw probabilities for the ensemble."""
+        return self.model.predict_proba(X)
+
 def clean_dataset(X):
     """
     1. Sanitizes Infinity/NaN.
@@ -107,36 +110,42 @@ class OrdinalNN(nn.Module):
         super(OrdinalNN, self).__init__()
         self.device = device
         
-        # 1. MANDATORY SCALER
+        # 1. Scaler
         self.scaler = StandardScaler()
         
-        # 2. Deeper, wider architecture
+        # 2. "Aggressive" Architecture
+        # We use SiLU (Swish) and very low dropout to capture sharp rules.
         self.layer_stack = nn.Sequential(
-            nn.Linear(input_dim, 512),       # Wider layer
+            nn.Linear(input_dim, 1024),      # Massive layer to capture "Port" logic
+            nn.BatchNorm1d(1024),
+            nn.SiLU(),                       # SiLU often beats ReLU on tabular data
+            nn.Dropout(0.05),                # Tiny dropout (almost none)
+            
+            nn.Linear(1024, 512),
             nn.BatchNorm1d(512),
-            nn.LeakyReLU(negative_slope=0.01), # Leaky ReLU prevents dead neurons
-            nn.Dropout(0.4),
+            nn.SiLU(),
+            nn.Dropout(0.05),
             
             nn.Linear(512, 256),
             nn.BatchNorm1d(256),
-            nn.LeakyReLU(negative_slope=0.01),
-            nn.Dropout(0.3),
+            nn.SiLU(),
+            nn.Dropout(0.05),
             
             nn.Linear(256, 128),
             nn.BatchNorm1d(128),
-            nn.LeakyReLU(negative_slope=0.01),
-            nn.Dropout(0.2),
+            nn.SiLU(),
+            nn.Dropout(0.05),
             
             nn.Linear(128, output_dim)
         ).to(device)
 
         self.cost_tensor = torch.tensor(COST_MATRIX, dtype=torch.float32).to(device)
         
-        # 3. Optimizer with Weight Decay
-        self.optimizer = optim.AdamW(self.parameters(), lr=0.001, weight_decay=1e-4)
+        # 3. Optimizer: Removed Weight Decay (allow sharp boundaries)
+        self.optimizer = optim.AdamW(self.parameters(), lr=0.001, weight_decay=0)
         
-        # 4. Scheduler: Lowers LR if loss stops improving
-        self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=10)
+        # 4. Scheduler
+        self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=5)
 
     def ordinal_cost_loss(self, logits, targets):
         probs = torch.softmax(logits, dim=1)
@@ -144,23 +153,32 @@ class OrdinalNN(nn.Module):
         loss = torch.sum(probs * batch_costs, dim=1).mean()
         return loss
 
-    def fit(self, X, y, epochs=50, batch_size=2048, patience=10):
-        print(f"Training Ordinal NN on {self.device}...")
+    def fit(self, X, y, epochs=50, batch_size=4096, patience=15):
+        print(f"Training Ordinal NN (Aggressive) on {self.device}...")
         
-        # --- CRITICAL: SCALE DATA ---
-        # If we don't scale, gradients explode.
         X_clean = clean_dataset(X)
         X_scaled = self.scaler.fit_transform(X_clean)
         
         X_t = torch.tensor(X_scaled, dtype=torch.float32).to(self.device)
-        y_t = torch.tensor(y.values if hasattr(y, 'values') else y, dtype=torch.long).to(self.device)
+        y_vals = y.values if hasattr(y, 'values') else y
+        y_t = torch.tensor(y_vals, dtype=torch.long).to(self.device)
+        
+        # Weighted Sampler (Keep this!)
+        class_counts = np.bincount(y_vals)
+        class_weights = 1. / class_counts
+        sample_weights = class_weights[y_vals]
+        
+        sampler = torch.utils.data.WeightedRandomSampler(
+            weights=torch.from_numpy(sample_weights).double(),
+            num_samples=len(sample_weights),
+            replacement=True
+        )
         
         dataset = TensorDataset(X_t, y_t)
-        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, shuffle=False)
         
         self.train()
         
-        # Early Stopping Variables
         best_loss = float('inf')
         patience_counter = 0
         best_model_wts = copy.deepcopy(self.state_dict())
@@ -176,14 +194,11 @@ class OrdinalNN(nn.Module):
                 total_loss += loss.item()
             
             avg_loss = total_loss / len(loader)
-            
-            # Step the scheduler
             self.scheduler.step(avg_loss)
             
             if (epoch + 1) % 5 == 0:
                 print(f"Epoch {epoch+1}/{epochs} | Loss: {avg_loss:.5f}")
             
-            # --- EARLY STOPPING CHECK ---
             if avg_loss < best_loss:
                 best_loss = avg_loss
                 best_model_wts = copy.deepcopy(self.state_dict())
@@ -194,9 +209,8 @@ class OrdinalNN(nn.Module):
                     print(f"Early stopping at epoch {epoch+1}. Best Loss: {best_loss:.5f}")
                     break
         
-        # Load best weights
         self.load_state_dict(best_model_wts)
-        torch.save(best_model_wts, OUTPUT_DIR)
+        # torch.save(best_model_wts, OUTPUT_DIR) # Optional
 
     def predict(self, X):
         self.eval()

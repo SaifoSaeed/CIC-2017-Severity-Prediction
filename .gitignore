@@ -9,3 +9,4 @@ proc_dfs
 __pycache__
 CIC-IDS-2017-CUDA
 weights
+table.csv

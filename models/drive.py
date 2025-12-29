@@ -1,6 +1,7 @@
 import os
 import torch
 import argparse
+import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -20,11 +21,13 @@ def ParseArgs():
     parser.add_argument("-l", "--logistic", action="store_true", help="train weighted logistic regression model")
     parser.add_argument("-x", "--xgb", action="store_true", help="train XG-boost model")
     parser.add_argument("-n", "--neural", action="store_true", help="train neural network model")
+    parser.add_argument("-e", "--ensemble", action="store_true", help="train an ensemble model using xgb and the neural network models")
     parser.add_argument("-o", "--output_dir", type=str, help="choose output directory")
     
     return parser.parse_args()
 
 # Helper to visualize and save results
+
 def SaveResults(y_true, y_pred, model_name):
     print(f"\n--- {model_name} Results ---")
     print(classification_report(y_true, y_pred))
@@ -101,6 +104,64 @@ def TrainNN(X_train, X_test, y_train, y_test):
     y_pred = model.predict(X_test)
     SaveResults(y_test, y_pred, "Ordinal_NN")
 
+# Add this function to drive.py
+def TrainEnsemble(X_train, X_test, y_train, y_test):
+    print("\n--- Model: Ensemble (XGBoost + Ordinal NN) ---")
+    
+    # 1. Train XGBoost
+    xgb_model = XGBoost()
+    xgb_model.fit(X_train, y_train)
+    # Get probabilities (N_samples, 4_classes)
+    xgb_probs = xgb_model.predict_proba(X_test)
+
+    # 2. Train Neural Network
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    nn_model = OrdinalNN(input_dim=X_train.shape[1], output_dim=4, device=device)
+    nn_model.fit(X_train, y_train, epochs=1000)
+    
+    # Get probabilities
+    nn_model.eval()
+    X_clean = clean_dataset(X_test)
+    X_scaled = nn_model.scaler.transform(X_clean)
+    X_t = torch.tensor(X_scaled, dtype=torch.float32).to(device)
+    with torch.no_grad():
+        logits = nn_model.layer_stack(X_t)
+        nn_probs = torch.softmax(logits, dim=1).cpu().numpy()
+
+    # 3. Combine (Soft Voting)
+    # We give XGBoost slightly more authority because it's generally more precise
+    final_probs = (0.6 * xgb_probs) + (0.4 * nn_probs)
+    y_pred = np.argmax(final_probs, axis=1)
+    
+    SaveResults(y_test, y_pred, "Ensemble_XGB_NN")
+
+# IMPORTANT: You need to patch the XGBoost predict method in lib.py 
+# to allow getting raw data for predict_proba if you haven't already.
+# Or simpler: Just access self.model directly in drive.py as shown above.
+
+def clean_dataset(X):
+    """
+    1. Sanitizes Infinity/NaN.
+    2. Applies Log-Transform to skewed columns (compression).
+    """
+    # 1. Sanitize
+    if hasattr(X, 'replace'): # Pandas
+        X = X.replace([np.inf, -np.inf], np.nan)
+        X = X.fillna(0)
+        # Convert to numpy for log math
+        X_val = X.values
+    else: # Numpy
+        X_val = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    # 2. Log-Transform Skewed Features
+    # Network data (Bytes, Duration, Packets) is highly skewed.
+    # We apply log1p (log(x+1)) to compress the range from [0, 10^9] to [0, 20].
+    # This allows the NN to see the difference between "Small" and "Medium" flows.
+    # Note: We apply it to absolute values to handle negatives if any exist (though rare in counts)
+    X_log = np.sign(X_val) * np.log1p(np.abs(X_val))
+    
+    return X_log
+
 def WriteWrap(func, *args):
     # This wrapper executes the training function passed to it
     func(*args)
@@ -142,6 +203,9 @@ def main():
 
     if args.neural:
         WriteWrap(TrainNN, X_train, X_test, y_train, y_test)
+    
+    if args.ensemble:
+        WriteWrap(TrainEnsemble, X_train, X_test, y_train, y_test)
 
     print("\nDone! Check output directory for results.")
 

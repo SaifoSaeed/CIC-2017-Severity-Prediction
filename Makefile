@@ -25,7 +25,7 @@ no-args:
 	python dex.py
 
 train_all:
-	python $(DRIVE) -l -x -n -o $(OUTPUT_DIR)
+	python $(DRIVE) -l -x -n -e -o $(OUTPUT_DIR)
 
 neural:
 	python $(DRIVE) -n -o $(OUTPUT_DIR)
@@ -35,3 +35,6 @@ xgb:
 
 lr:
 	python $(DRIVE) -l -o $(OUTPUT_DIR)
+
+ensemble:
+	python $(DRIVE) -e -o $(OUTPUT_DIR)
